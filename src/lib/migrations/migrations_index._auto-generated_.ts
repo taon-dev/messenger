@@ -2,4 +2,5 @@
 
 // THIS FILE IS GENERATED - DO NOT MODIFY
 export const MIGRATIONS_CLASSES_FOR_MessengerContext = {};
+export const MIGRATIONS_CLASSES_FOR_TaonMessengerAbstractContext = {};
 // THIS FILE IS GENERATED - DO NOT MODIFY
