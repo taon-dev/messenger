@@ -32,6 +32,11 @@ export class TaonDirectConversationReadStateEntity extends TaonBaseEntity<TaonDi
   //#endregion
   readCursor: number;
 
+  //#region @websql
+  @Column({ type: 'boolean', default: false })
+  //#endregion
+  manualUnread: boolean;
+
   @UpdateDateColumn()
   updatedAt: Date;
 }

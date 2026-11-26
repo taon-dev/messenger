@@ -1,0 +1,25 @@
+<mat-card class="messenger-card">
+  <mat-card-title class="p-4">Messages <button mat-button type="button" (click)="markUnread()">Mark as unread</button></mat-card-title>
+  <mat-card-content>
+    @for (message of messages(); track message.id) {
+      <div class="message-bubble" [class.outgoing]="message.senderType === 'client'">
+        <strong>{{ message.senderType === 'administrator' ? 'Agency' : 'You' }}</strong>
+        <span>{{ message.content }}</span>
+        @for (attachment of message.attachments || []; track attachment.id) {
+          <a [href]="'/TaonDirectMessageAttachmentController/download?key=' + attachment.storageKey">{{ attachment.fileName }}</a>
+        }
+      </div>
+    }
+    @for (attachment of pendingAttachments(); track attachment.key) {
+      <div class="pending-attachment">
+        {{ attachment.fileName || attachment.originalFileName || attachment.key }}
+        <button mat-icon-button type="button" aria-label="Remove attachment" (click)="removePendingAttachment(attachment)">×</button>
+      </div>
+    }
+    <input type="file" multiple (change)="selectAttachments($event)" />
+    <mat-form-field class="w-full">
+      <textarea matInput [(ngModel)]="draft" rows="3" (keydown.enter)="onEnter($event)"></textarea>
+    </mat-form-field>
+    <button mat-flat-button [disabled]="sending() || (!draft.trim() && !pendingAttachments().length)" (click)="send()">{{ sending() ? 'Sending...' : 'Send message' }}</button>
+  </mat-card-content>
+</mat-card>

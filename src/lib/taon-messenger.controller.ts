@@ -19,10 +19,12 @@ import {
 import { TaonDirectConversationReadStateEntity } from './taon-direct-conversation-read-state.entity';
 import { TaonDirectConversationEntity } from './taon-direct-conversation.entity';
 import { TaonDirectMessageEntity } from './taon-direct-message.entity';
+import { TaonDirectMessageAttachmentEntity } from './taon-direct-message-attachment.entity';
 
 interface SendMessageInput {
   conversationId?: number;
   content?: string;
+  attachmentKeys?: string[];
   clientRequestId?: string;
 }
 
@@ -34,6 +36,8 @@ interface SendMessageInput {
     'send',
     'markRead',
     'conversations',
+    'markUnread',
+    'unreadCount',
   ],
 })
 export class TaonMessengerController extends TaonBaseCrudController<TaonDirectMessageEntity> {
@@ -121,7 +125,7 @@ export class TaonMessengerController extends TaonBaseCrudController<TaonDirectMe
         current.isAdmin,
       );
       const cursor = Number(afterCursor) || 0;
-      return this.repository(TaonDirectMessageEntity)
+      const messages = await this.repository(TaonDirectMessageEntity)
         .createQueryBuilder('message')
         .where('message.conversationId = :conversationId', {
           conversationId: conversation.id,
@@ -129,7 +133,14 @@ export class TaonMessengerController extends TaonBaseCrudController<TaonDirectMe
         .andWhere('message.cursor > :cursor', { cursor })
         .andWhere('message.deletedAt IS NULL')
         .orderBy('message.cursor', 'ASC')
-        .getMany() as any;
+        .getMany();
+      const attachmentRepo = this.repository(TaonDirectMessageAttachmentEntity);
+      const result: any[] = [];
+      for (const message of messages) {
+        const attachments = await attachmentRepo.find({ where: { messageId: message.id } });
+        result.push({ ...message, attachments });
+      }
+      return result as any;
     };
     //#endregion
   }
@@ -167,17 +178,18 @@ export class TaonMessengerController extends TaonBaseCrudController<TaonDirectMe
           );
         }
       }
-      const content = input.content?.trim();
-      if (!content)
+      const content = input.content?.trim() || null;
+      const attachmentKeys = Array.from(new Set((input.attachmentKeys || []).filter(Boolean)));
+      if (!content && attachmentKeys.length === 0)
         Taon.error({
           status: getStatusCode(HttpStatusEnum.BAD_REQUEST),
-          message: 'Message text is required.',
+          message: 'Message text or attachment is required.',
         });
 
       const cursor = Number(conversation.lastMessageCursor || 0) + 1;
       conversation.lastMessageCursor = cursor;
       await this.repository(TaonDirectConversationEntity).save(conversation);
-      return this.repository(TaonDirectMessageEntity).save(
+      const message = await this.repository(TaonDirectMessageEntity).save(
         this.repository(TaonDirectMessageEntity).create({
           conversationId: conversation.id,
           senderId: current.id,
@@ -186,7 +198,23 @@ export class TaonMessengerController extends TaonBaseCrudController<TaonDirectMe
           cursor,
           deletedAt: null,
         }),
-      ) as any;
+      );
+      if (attachmentKeys.length) {
+        const attachmentRepo = this.repository(TaonDirectMessageAttachmentEntity);
+        const pending = await attachmentRepo.find({
+          where: { conversationId: conversation.id, messageId: 0, uploadedBy: current.id },
+        });
+        const allowed = new Set(pending.map((attachment: any) => attachment.storageKey));
+        for (const key of attachmentKeys) {
+          if (!allowed.has(key)) {
+            Taon.error({ status: getStatusCode(HttpStatusEnum.FORBIDDEN), message: 'Attachment ownership denied.' });
+          }
+        }
+        await Promise.all(pending
+          .filter((attachment: any) => attachmentKeys.includes(attachment.storageKey))
+          .map((attachment: any) => attachmentRepo.save({ ...attachment, messageId: message.id })));
+      }
+      return message as any;
     };
     //#endregion
   }
@@ -194,6 +222,7 @@ export class TaonMessengerController extends TaonBaseCrudController<TaonDirectMe
   @POST()
   markRead(
     @Query('conversationId') conversationId: number,
+    @Query('readCursor') readCursor?: number,
   ): Taon.Response<boolean> {
     //#region @websqlFunc
     return async req => {
@@ -211,13 +240,80 @@ export class TaonMessengerController extends TaonBaseCrudController<TaonDirectMe
         state = readRepo.create({
           conversationId: conversation.id,
           participantId: current.id,
-          readCursor: conversation.lastMessageCursor || 0,
+          readCursor: Math.min(Number(readCursor) || 0, conversation.lastMessageCursor || 0),
+          manualUnread: false,
         });
       } else {
-        state.readCursor = conversation.lastMessageCursor || 0;
+        state.readCursor = Math.max(state.readCursor || 0, Math.min(Number(readCursor) || 0, conversation.lastMessageCursor || 0));
+        state.manualUnread = false;
       }
       await readRepo.save(state);
       return true;
+    };
+    //#endregion
+  }
+
+  @POST()
+  markUnread(@Query('conversationId') conversationId: number): Taon.Response<boolean> {
+    //#region @websqlFunc
+    return async req => {
+      const current = await this.user(req);
+      const conversation = await this.authorizedConversation(Number(conversationId), current.id, current.isAdmin);
+      const readRepo = this.repository(TaonDirectConversationReadStateEntity);
+      let state = await readRepo.findOne({
+        where: { conversationId: conversation.id, participantId: current.id },
+      });
+      if (!state) {
+        state = readRepo.create({
+          conversationId: conversation.id,
+          participantId: current.id,
+          readCursor: conversation.lastMessageCursor || 0,
+          manualUnread: true,
+        });
+      } else {
+        state.manualUnread = true;
+      }
+      await readRepo.save(state);
+      return true;
+    };
+    //#endregion
+  }
+
+  @GET()
+  unreadCount(): Taon.Response<number> {
+    //#region @websqlFunc
+    return async req => {
+      const current = await this.user(req);
+      let conversations = [] as TaonDirectConversationEntity[];
+      if (current.isAdmin) {
+        conversations = (await this.repository(TaonDirectConversationEntity).find()) as any;
+      } else {
+        const conversation = await this.repository(TaonDirectConversationEntity).findOne({
+          where: { clientId: current.id },
+        }) as any;
+        if (conversation) conversations = [conversation];
+      }
+      let unread = 0;
+      const readRepo = this.repository(TaonDirectConversationReadStateEntity);
+      for (const conversation of conversations) {
+        const state = await readRepo.findOne({
+          where: { conversationId: conversation.id, participantId: current.id },
+        });
+        if (state?.manualUnread) {
+          unread++;
+          continue;
+        }
+        const readCursor = state?.readCursor || 0;
+        if (conversation.lastMessageCursor > readCursor) {
+          const latest = await this.repository(TaonDirectMessageEntity).createQueryBuilder('message')
+            .where('message.conversationId = :conversationId', { conversationId: conversation.id })
+            .andWhere('message.deletedAt IS NULL')
+            .orderBy('message.cursor', 'DESC')
+            .getOne();
+          if (!latest || latest.senderId !== current.id) unread++;
+        }
+      }
+      return unread as any;
     };
     //#endregion
   }

@@ -1,0 +1,43 @@
+<div class="messenger-layout">
+  <mat-card class="conversation-list">
+    <mat-card-title class="p-4">Conversations</mat-card-title>
+    <mat-nav-list>
+      @for (conversation of conversations(); track conversation.id) {
+        <button mat-list-item (click)="open(conversation)">
+          Client #{{ conversation.clientId }}
+          <small>{{ conversation.updatedAt }}</small>
+          <button mat-button type="button" (click)="markUnread(conversation)">Mark as unread</button>
+        </button>
+      }
+    </mat-nav-list>
+  </mat-card>
+  <mat-card class="conversation-panel">
+    @if (selected()) {
+      <mat-card-title class="p-4">Client #{{ selected()!.clientId }}</mat-card-title>
+      <mat-card-content>
+        @for (message of messages(); track message.id) {
+          <div class="message-row">
+            <strong>{{ message.senderType === 'administrator' ? 'Agency' : 'Client' }}:</strong>
+            {{ message.content }}
+            @for (attachment of message.attachments || []; track attachment.id) {
+              <a [href]="'/TaonDirectMessageAttachmentController/download?key=' + attachment.storageKey">{{ attachment.fileName }}</a>
+            }
+          </div>
+        }
+        @for (attachment of pendingAttachments(); track attachment.key) {
+          <div>
+            {{ attachment.fileName || attachment.originalFileName || attachment.key }}
+            <button mat-icon-button type="button" (click)="removePendingAttachment(attachment)">×</button>
+          </div>
+        }
+        <input type="file" multiple (change)="selectAttachments($event)" />
+        <mat-form-field class="w-full">
+          <textarea matInput [(ngModel)]="draft" rows="3"></textarea>
+        </mat-form-field>
+        <button mat-flat-button [disabled]="sending() || (!draft.trim() && !pendingAttachments().length)" (click)="send()">{{ sending() ? 'Sending...' : 'Send' }}</button>
+      </mat-card-content>
+    } @else {
+      <mat-card-content>Select a conversation.</mat-card-content>
+    }
+  </mat-card>
+</div>

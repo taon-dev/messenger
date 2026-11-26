@@ -1,10 +1,12 @@
-import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { catchError, exhaustMap, of, switchMap, timer } from 'rxjs';
 
 import type { TaonDirectConversationEntity } from './taon-direct-conversation.entity';
 import type { TaonDirectMessageEntity } from './taon-direct-message.entity';
@@ -21,58 +23,11 @@ import { TaonMessengerApiService } from './taon-messenger-api.service';
     MatInputModule,
     FormsModule,
   ],
-  template: `
-    <div class="grid md:grid-cols-[280px_1fr] gap-4">
-      <mat-card>
-        <mat-card-title class="p-4">Rozmowy</mat-card-title>
-        <mat-nav-list>
-          @for (conversation of conversations(); track conversation.id) {
-            <button
-              mat-list-item
-              (click)="open(conversation)">
-              Klient #{{ conversation.clientId }}
-              <small>{{ conversation.updatedAt }}</small>
-            </button>
-          }
-        </mat-nav-list>
-      </mat-card>
-      <mat-card>
-        @if (selected()) {
-          <mat-card-title class="p-4">Klient #{{ selected()!.clientId }}</mat-card-title>
-          <mat-card-content>
-            @for (message of messages(); track message.id) {
-              <div>
-                <strong
-                  >{{
-                    message.senderType === 'administrator'
-                      ? 'Taon Agency'
-                      : 'Klient'
-                  }}:</strong
-                >
-                {{ message.content }}
-              </div>
-            }
-            <mat-form-field class="w-full">
-              <textarea
-                matInput
-                [(ngModel)]="draft"
-                rows="3"></textarea>
-            </mat-form-field>
-            <button
-              mat-flat-button
-              (click)="send()">
-              Wyślij
-            </button>
-          </mat-card-content>
-        } @else {
-          <mat-card-content>Wybierz rozmowę.</mat-card-content>
-        }
-      </mat-card>
-    </div>
-  `,
+  templateUrl: './taon-messenger-backoffice.component.html',
+  styleUrl: './taon-messenger-backoffice.component.scss',
   providers: [TaonMessengerApiService],
 })
-export class TaonMessengerBackofficeComponent implements OnInit, OnDestroy {
+export class TaonMessengerBackofficeComponent implements OnInit {
   private readonly api = inject(TaonMessengerApiService);
 
   readonly conversations = signal<TaonDirectConversationEntity[]>([]);
@@ -82,21 +37,30 @@ export class TaonMessengerBackofficeComponent implements OnInit, OnDestroy {
   readonly messages = signal<TaonDirectMessageEntity[]>([]);
 
   draft = '';
+  readonly pendingAttachments = signal<any[]>([]);
+  readonly sending = signal(false);
 
-  private timer?: ReturnType<typeof setInterval>;
-
-  async ngOnInit() {
-    this.conversations.set(await this.api.conversations());
-    this.timer = setInterval(() => void this.refresh(), 5000);
-  }
-
-  ngOnDestroy() {
-    if (this.timer) clearInterval(this.timer);
+  ngOnInit() {
+    this.api.conversations$().pipe(takeUntilDestroyed()).subscribe(items => this.conversations.set(items));
+    timer(0, 5000).pipe(
+      switchMap(() => {
+        const conversation = this.selected();
+        if (!conversation) return of([] as TaonDirectMessageEntity[]);
+        return this.api.messages$(conversation.id, this.messages().at(-1)?.cursor || 0).pipe(
+          catchError(() => of([] as TaonDirectMessageEntity[])),
+          exhaustMap(messages => of(messages)),
+        );
+      }),
+      takeUntilDestroyed(),
+    ).subscribe(newer => {
+      if (newer.length) this.messages.update(items => [...items, ...newer]);
+    });
   }
 
   async open(conversation: TaonDirectConversationEntity) {
     this.selected.set(conversation);
     this.messages.set([]);
+    this.pendingAttachments.set([]);
     await this.refresh();
     await this.api.markRead(conversation.id);
   }
@@ -109,12 +73,45 @@ export class TaonMessengerBackofficeComponent implements OnInit, OnDestroy {
     if (newer.length) this.messages.update(items => [...items, ...newer]);
   }
 
+  async markUnread(conversation: TaonDirectConversationEntity) {
+    await this.api.markUnread(conversation.id);
+  }
+
+  async selectAttachments(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const conversation = this.selected();
+    const files = Array.from(input.files || []);
+    if (!conversation || !files.length) return;
+    try {
+      const uploaded = await this.api.uploadAttachments(conversation.id, files);
+      this.pendingAttachments.update(items => [...items, ...uploaded]);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      input.value = '';
+    }
+  }
+
+  async removePendingAttachment(attachment: any) {
+    await this.api.removeAttachment(attachment.key);
+    this.pendingAttachments.update(items => items.filter(item => item.key !== attachment.key));
+  }
+
   async send() {
     const conversation = this.selected();
     const content = this.draft.trim();
-    if (!conversation || !content) return;
-    const sent = await this.api.send(conversation.id, content);
-    this.draft = '';
-    this.messages.update(items => [...items, sent]);
+    const keys = this.pendingAttachments().map(attachment => attachment.key);
+    if (!conversation || (!content && !keys.length) || this.sending()) return;
+    this.sending.set(true);
+    try {
+      const sent = await this.api.send(conversation.id, content, keys);
+      this.draft = '';
+      this.pendingAttachments.set([]);
+      this.messages.update(items => [...items, sent]);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      this.sending.set(false);
+    }
   }
 }

@@ -1,0 +1,4 @@
+.messenger-layout { display: grid; grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); gap: 16px; }
+.conversation-list, .conversation-panel { min-width: 0; }
+.message-row { padding: 8px 0; }
+@media (max-width: 720px) { .messenger-layout { grid-template-columns: 1fr; } }

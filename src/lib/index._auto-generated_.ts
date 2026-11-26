@@ -8,6 +8,7 @@ export * from './my-organization-proj';
 export * from './start-cli'; 
 export * from './taon-direct-conversation-read-state.entity'; 
 export * from './taon-direct-conversation.entity'; 
+export * from './taon-direct-message-attachment.controller'; 
 export * from './taon-direct-message-attachment.entity'; 
 export * from './taon-direct-message.entity'; 
 export * from './taon-direct-messages.component'; // @browser

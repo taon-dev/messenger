@@ -17,9 +17,21 @@ export class TaonDirectMessageAttachmentEntity extends TaonBaseEntity<TaonDirect
 
   //#region @websql
   @Index()
-  @Column({ type: 'integer' })
+  @Column({ type: 'integer', default: 0 })
   //#endregion
   messageId: number;
+
+  //#region @websql
+  @Index()
+  @Column({ type: 'integer' })
+  //#endregion
+  conversationId: number;
+
+  //#region @websql
+  @Index()
+  @Column({ type: 'integer' })
+  //#endregion
+  uploadedBy: number;
 
   //#region @websql
   @Column({ type: 'varchar', length: 500 })

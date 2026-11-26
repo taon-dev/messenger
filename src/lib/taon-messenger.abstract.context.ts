@@ -5,6 +5,7 @@ import { TaonDirectMessageEntity } from './taon-direct-message.entity';
 import { TaonDirectMessageAttachmentEntity } from './taon-direct-message-attachment.entity';
 import { TaonDirectConversationReadStateEntity } from './taon-direct-conversation-read-state.entity';
 import { TaonMessengerController } from './taon-messenger.controller';
+import { TaonDirectMessageAttachmentController } from './taon-direct-message-attachment.controller';
 
 export const TaonMessengerAbstractContext = createContext(() => ({
   contextName: 'TaonMessengerAbstractContext',
@@ -16,5 +17,5 @@ export const TaonMessengerAbstractContext = createContext(() => ({
     TaonDirectMessageAttachmentEntity,
     TaonDirectConversationReadStateEntity,
   },
-  controllers: { TaonMessengerController },
+  controllers: { TaonMessengerController, TaonDirectMessageAttachmentController },
 }));
